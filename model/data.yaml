@@ -1,0 +1,13 @@
+train: ../train/images
+val: ../valid/images
+test: ../test/images
+
+nc: 4
+names: ['stop_sign', 'traffic_light_green', 'traffic_light_red', 'traffic_light_yellow']
+
+roboflow:
+  workspace: estiven-joel-laferre-guevara
+  project: find-traffic_light-heubh
+  version: dataset
+  license: Public Domain
+  url: https://universe.roboflow.com/estiven-joel-laferre-guevara/find-traffic_light-heubh/dataset/dataset
