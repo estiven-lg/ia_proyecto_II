@@ -3,54 +3,60 @@ from picamera2 import Picamera2
 from libcamera import Transform
 import cv2
 
-MODEL_PATH = "./model/runs/detect/carro-autonomo-pi/weights/best.pt"
-CONF_THRESH = 0.05
+MODEL_PATH = "./model/runs/detect/carro-autonomo-pi/weights/best_ncnn_model"
+CONF_THRESH = 0.1  # Subir umbral: menos falsos positivos, menos trabajo
+IOU_THRESH = 0.5
 
-ACTIONS = {
-    "stop sign":            "🛑 DETENER",
-    "traffic_light_red":    "🔴 SEMÁFORO ROJO",
-    "traffic_light_green":  "🟢 SEMÁFORO VERDE",
-    "traffic_light_yellow": "🟡 PRECAUCIÓN",
-}
 
-model = YOLO(MODEL_PATH)
+class Vision:
 
-print("Clases:", model.names)
+    def __init__(self):
+        self.model = YOLO(MODEL_PATH)
 
-# Cámara CSI
-picam2 = Picamera2()
+        # Exportar a NCNN para inferencia optimizada en Pi (solo primera vez)
+        # self.model.export(format="ncnn")
+        # self.model = YOLO("./model/.../best_ncnn_model")
 
-config = picam2.create_preview_configuration(
-    main={
-        "format": "RGB888",
-        "size": (640, 480)
-    },
-    transform=Transform(hflip=1, vflip=1)
-)
+        self.picam2 = Picamera2()
 
-picam2.configure(config)
-picam2.start()
+        config = self.picam2.create_preview_configuration(
+            main={
+                "format": "RGB888",
+                "size": (640, 480)  # Reducir resolución: 4x menos píxeles
+            },
+            transform=Transform(hflip=1, vflip=1),
+            controls={"FrameRate": 15}  # Limitar FPS de captura
+        )
 
-while True:
-    frame = picam2.capture_array()
+        self.picam2.configure(config)
+        self.picam2.start()
 
-    results = model(frame, conf=CONF_THRESH)
+        # Calentar el modelo (primer inference es siempre lenta)
+        import numpy as np
+        self.model(np.zeros((480, 640, 3), dtype="uint8"), verbose=False)
 
-    annotated = results[0].plot()
+    def get_detections(self):
 
-    for r in results:
-        for box in r.boxes:
-            name = model.names[int(box.cls[0])]
-            conf = float(box.conf[0])
+        frame = self.picam2.capture_array()
 
-            print(f"Detectado: {name} conf={conf:.3f}")
+        results = self.model(
+            frame,
+            conf=CONF_THRESH,
+            iou=IOU_THRESH,
+            verbose=False,   # Silenciar logs por frame (ahorra I/O)
+            half=True,       # FP16: reduce memoria y acelera en ARM
+        )
 
-            if name in ACTIONS:
-                print(f">>> {ACTIONS[name]}")
+        detections = []
 
-    cv2.imshow("Carro Autonomo", annotated)
+        for r in results:
+            for box in r.boxes:
+                detections.append({
+                    "name": self.model.names[int(box.cls[0])],
+                    "confidence": float(box.conf[0])
+                })
 
-    if cv2.waitKey(1) == 27:  # ESC
-        break
+        # plot() solo si hay detecciones (evita trabajo innecesario)
+        annotated = results[0].plot() if detections else frame
 
-cv2.destroyAllWindows()
+        return detections, annotated
